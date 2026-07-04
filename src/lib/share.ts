@@ -139,13 +139,12 @@ export function prepareReport(
       const data = aggregateSeries(scoped, chart.x, chart.y, chart.agg);
       prepared = { type: "donut", data, yFormat };
     } else {
+      // Defensive: a stacked_bar that lost its series in validation falls
+      // through to here — render it as a plain bar rather than crash.
+      const flatType =
+        chart.type === "stacked_bar" ? "bar" : (chart.type as "line" | "area" | "bar" | "horizontal_bar");
       const data = aggregateSeries(scoped, chart.x, chart.y, chart.agg);
-      prepared = {
-        type: chart.type as "line" | "area" | "bar" | "horizontal_bar",
-        data,
-        yFormat,
-        xIsMonth,
-      };
+      prepared = { type: flatType, data, yFormat, xIsMonth };
     }
 
     return { heading: section.heading, insight: section.insight_sentence, chart: prepared };
