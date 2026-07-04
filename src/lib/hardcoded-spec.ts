@@ -10,8 +10,8 @@ export const sampleSpec: ReportSpec = {
   kpis: [
     { label: "Total revenue", value_expr: { agg: "sum", column: "revenue_gbp" }, format: "currency" },
     { label: "New customers", value_expr: { agg: "sum", column: "new_customers" }, format: "compact" },
-    { label: "Avg monthly revenue", value_expr: { agg: "avg", column: "revenue_gbp" }, format: "currency" },
-    { label: "Products tracked", value_expr: { agg: "count", column: "product" }, format: "number" },
+    { label: "Churned customers", value_expr: { agg: "sum", column: "churned_customers" }, format: "compact" },
+    { label: "Rows recorded", value_expr: { agg: "count", column: "revenue_gbp" }, format: "compact" },
   ],
   sections: [
     {
