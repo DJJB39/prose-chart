@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 
 import { EntrySurface } from "@/components/entry/EntrySurface";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { ExportBar } from "@/components/report/ExportBar";
 import { Report } from "@/components/report/Report";
 import { autoSpec } from "@/lib/auto-spec";
@@ -90,8 +91,7 @@ function VeritasApp() {
     return (
       <div className="min-h-screen bg-paper text-ink">
         <div className="no-print flex items-center justify-end gap-3 px-8 py-4">
-          {/* Theme toggle available even on the entry surface. */}
-          <ThemeSlot />
+          <ThemeToggle />
         </div>
         <EntrySurface
           onSubmit={handleSubmit}
@@ -123,9 +123,3 @@ function VeritasApp() {
   );
 }
 
-function ThemeSlot() {
-  // Small wrapper — keeps SSR consistent (button label decided client-side).
-  // Import here to keep entry surface lean.
-  const ThemeToggle = require("@/components/ThemeToggle").ThemeToggle as React.FC;
-  return <ThemeToggle />;
-}
