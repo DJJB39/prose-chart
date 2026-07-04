@@ -42,6 +42,7 @@ export function validateSpec(spec: ReportSpec, profile: DatasetProfile): Validat
     needNumeric(c.y, c.agg, `section "${s.heading}"`);
     if (c.filter) need(c.filter.column, `section "${s.heading}" filter`);
     let series = c.series;
+    let type = c.type;
     if (series) {
       const sc = byName.get(series);
       if (!sc) {
@@ -51,7 +52,12 @@ export function validateSpec(spec: ReportSpec, profile: DatasetProfile): Validat
         series = undefined;
       }
     }
-    return { ...s, chart: { ...c, series } };
+    // A stacked_bar without a series is undefined — downgrade to a plain bar.
+    if (type === "stacked_bar" && !series) {
+      warnings.push(`section "${s.heading}": stacked_bar with no series → downgraded to bar`);
+      type = "bar";
+    }
+    return { ...s, chart: { ...c, type, series } };
   });
 
   if (errors.length > 0) return { ok: false, errors };
