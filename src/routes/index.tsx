@@ -7,7 +7,7 @@ import { ExportBar } from "@/components/report/ExportBar";
 import { Report } from "@/components/report/Report";
 import { sampleMeta, sampleRows } from "@/lib/sample-data";
 import { parseFile } from "@/lib/parse";
-import { hasNumericColumn, profileDataset } from "@/lib/profile";
+import { profileDataset } from "@/lib/profile";
 import { ReportSpecSchema } from "@/lib/spec";
 import { prepareReport, type PreparedReport } from "@/lib/share";
 import type { Row } from "@/lib/aggregate";
