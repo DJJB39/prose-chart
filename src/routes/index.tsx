@@ -40,11 +40,6 @@ function VeritasApp() {
 
   async function composeVia(brief: string, rows: Row[], filename: string) {
     const profile = profileDataset(rows);
-    if (!hasNumericColumn(profile)) {
-      throw new Error(
-        "This dataset has no numeric column, so there is nothing to aggregate. A useful Veritas report needs at least one measure — revenue, a count, a rate — to compose against.",
-      );
-    }
     const res = await fetch("/api/compose", {
       method: "POST",
       headers: { "content-type": "application/json" },
