@@ -1,8 +1,17 @@
 // Aggregation contract — the app owns every number.
 // The spec says which agg + which columns; this file computes over full data.
 
-export type Agg = "sum" | "avg" | "count" | "min" | "max";
+export type Agg = "sum" | "avg" | "count" | "distinct_count" | "min" | "max";
 export type Row = Record<string, unknown>;
+
+export function isBlank(v: unknown): boolean {
+  return (
+    v === null ||
+    v === undefined ||
+    (typeof v === "string" && v.trim() === "") ||
+    (typeof v === "number" && Number.isNaN(v))
+  );
+}
 
 function toNum(v: unknown): number | null {
   if (typeof v === "number" && Number.isFinite(v)) return v;
@@ -18,7 +27,9 @@ export function reduceAgg(values: number[], agg: Agg, countAll: number): number 
     case "avg": return values.reduce((s, v) => s + v, 0) / values.length;
     case "min": return Math.min(...values);
     case "max": return Math.max(...values);
+    case "distinct_count": return countAll; // handled specially by callers
   }
+  return 0;
 }
 
 /** Single scalar over the whole dataset (optionally filtered). */
