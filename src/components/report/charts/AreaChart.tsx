@@ -1,5 +1,5 @@
 import {
-  CartesianGrid, Line, LineChart as RCLineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Area, AreaChart as RCAreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 
 import { formatValue, type FormatKind } from "@/lib/format";
@@ -13,16 +13,22 @@ type Props = {
   height?: number;
 };
 
-export function LineChart({ data, yFormat, xTickFormatter, height = 260 }: Props) {
+export function AreaChart({ data, yFormat, xTickFormatter, height = 260 }: Props) {
   return (
     <div style={{ width: "100%", height }}>
       <ResponsiveContainer>
-        <RCLineChart data={data} margin={{ top: 12, right: 32, bottom: 8, left: 8 }}>
+        <RCAreaChart data={data} margin={{ top: 12, right: 32, bottom: 8, left: 8 }}>
+          <defs>
+            <linearGradient id="veritas-area-fill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.22} />
+              <stop offset="100%" stopColor="var(--accent)" stopOpacity={0.02} />
+            </linearGradient>
+          </defs>
           <CartesianGrid stroke="var(--rule)" vertical={false} />
           <XAxis
             dataKey="x" stroke="var(--rule)" tickLine={false}
-            axisLine={{ stroke: "var(--rule)" }}
-            tick={AXIS_TICK} tickFormatter={xTickFormatter}
+            axisLine={{ stroke: "var(--rule)" }} tick={AXIS_TICK}
+            tickFormatter={xTickFormatter}
             interval="preserveStartEnd" minTickGap={28}
             padding={{ left: 4, right: 12 }}
           />
@@ -37,13 +43,12 @@ export function LineChart({ data, yFormat, xTickFormatter, height = 260 }: Props
             labelFormatter={xTickFormatter}
             formatter={(v: number) => [formatValue(yFormat, v), ""]}
           />
-          <Line
+          <Area
             type="monotone" dataKey="y" stroke="var(--accent)"
-            strokeWidth={1.75} dot={false}
-            activeDot={{ r: 3.5, fill: "var(--accent)", stroke: "var(--paper)", strokeWidth: 2 }}
+            strokeWidth={1.75} fill="url(#veritas-area-fill)"
             isAnimationActive={false}
           />
-        </RCLineChart>
+        </RCAreaChart>
       </ResponsiveContainer>
     </div>
   );
