@@ -43,6 +43,14 @@ export function aggregateScalar(
     ? rows.filter((r) => String(r[filter.column]) === filter.equals)
     : rows;
   if (agg === "count") return filtered.length;
+  if (agg === "distinct_count") {
+    const seen = new Set<string>();
+    for (const r of filtered) {
+      const v = r[column];
+      if (!isBlank(v)) seen.add(String(v));
+    }
+    return seen.size;
+  }
   const nums: number[] = [];
   for (const r of filtered) {
     const n = toNum(r[column]);
@@ -51,16 +59,41 @@ export function aggregateScalar(
   return reduceAgg(nums, agg, filtered.length);
 }
 
-/** Group rows by x (single series). Returns rows sorted by x asc. */
+/** Count of rows whose value in `column` is null/blank (after optional filter). */
+export function blankCount(
+  rows: Row[],
+  column: string,
+  filter?: { column: string; equals: string },
+): number {
+  const filtered = filter
+    ? rows.filter((r) => String(r[filter.column]) === filter.equals)
+    : rows;
+  let n = 0;
+  for (const r of filtered) if (isBlank(r[column])) n++;
+  return n;
+}
+
+/** Group rows by x (single series). Rows with blank x are excluded. Returns rows sorted by x asc. */
 export function aggregateSeries(
   rows: Row[],
   x: string,
   y: string,
   agg: Agg,
 ): Array<{ x: string; y: number }> {
+  const nonBlank = rows.filter((r) => !isBlank(r[x]));
+  if (agg === "distinct_count") {
+    const sets = new Map<string, Set<string>>();
+    for (const r of nonBlank) {
+      const key = String(r[x]);
+      if (!sets.has(key)) sets.set(key, new Set());
+      const v = r[y];
+      if (!isBlank(v)) sets.get(key)!.add(String(v));
+    }
+    return [...sets.keys()].sort().map((k) => ({ x: k, y: sets.get(k)!.size }));
+  }
   const buckets = new Map<string, number[]>();
   const counts = new Map<string, number>();
-  for (const r of rows) {
+  for (const r of nonBlank) {
     const key = String(r[x]);
     counts.set(key, (counts.get(key) ?? 0) + 1);
     const n = toNum(r[y]);
