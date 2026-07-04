@@ -34,8 +34,9 @@ export async function exportReportToPdf(node: HTMLElement, filename = "veritas-r
   // One frame for any pending layout/animation settle.
   await new Promise((r) => requestAnimationFrame(() => r(null)));
 
+  const paper = currentPaperColor();
   const canvas = await html2canvas(node, {
-    backgroundColor: PAPER,
+    backgroundColor: paper,
     scale: 2,
     useCORS: true,
     logging: false,
@@ -64,7 +65,7 @@ export async function exportReportToPdf(node: HTMLElement, filename = "veritas-r
     sliceCanvas.width = canvas.width;
     sliceCanvas.height = Math.ceil(sliceHeight);
     const ctx = sliceCanvas.getContext("2d")!;
-    ctx.fillStyle = PAPER;
+    ctx.fillStyle = paper;
     ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
     ctx.drawImage(
       canvas,
@@ -83,7 +84,7 @@ export async function exportReportToPdf(node: HTMLElement, filename = "veritas-r
 
     // Fill the whole page with paper first (edge-to-edge), so any anti-aliased
     // fringe outside the image band still reads as paper, not white.
-    pdf.setFillColor(PAPER);
+    pdf.setFillColor(paper);
     pdf.rect(0, 0, A4_WIDTH_PT, A4_HEIGHT_PT, "F");
 
     pdf.addImage(
