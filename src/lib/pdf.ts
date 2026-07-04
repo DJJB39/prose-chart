@@ -25,14 +25,15 @@ function currentPaperColor(): string {
   return v || "#faf9f6";
 }
 
-async function captureBlock(el: HTMLElement, paper: string): Promise<HTMLCanvasElement> {
+async function captureBlock(el: HTMLElement, paper: string, targetWidth: number): Promise<HTMLCanvasElement> {
   return html2canvas(el, {
     backgroundColor: paper,
     scale: 2,
     useCORS: true,
     logging: false,
     foreignObjectRendering: false,
-    windowWidth: el.scrollWidth,
+    width: targetWidth,
+    windowWidth: targetWidth,
   });
 }
 
@@ -60,14 +61,17 @@ export async function exportReportToPdf(node: HTMLElement, filename = "veritas-r
   const blocks = Array.from(node.children).filter((c): c is HTMLElement => c instanceof HTMLElement);
   const canvases = await Promise.all(blocks.map((el) => captureBlock(el, paper)));
 
+  // All blocks captured at the same target width so relative scaling
+  // matches the on-screen layout and pxPerPt is uniform.
+  const targetWidth = node.clientWidth;
+  const blocks = Array.from(node.children).filter((c): c is HTMLElement => c instanceof HTMLElement);
+  const canvases = await Promise.all(blocks.map((el) => captureBlock(el, paper, targetWidth)));
+
   const pdf = new jsPDF({ unit: "pt", format: "a4", orientation: "portrait" });
   const printableWidth = A4_WIDTH_PT - MARGIN_PT * 2;
   const printableHeight = A4_HEIGHT_PT - MARGIN_PT * 2;
 
-  // Scale all blocks to fit the printable width — same pxPerPt for all so
-  // relative sizing matches the on-screen layout.
-  const widestPx = Math.max(...canvases.map((c) => c.width));
-  const pxPerPt = widestPx / printableWidth;
+  const pxPerPt = (targetWidth * 2) / printableWidth; // scale:2 so canvas width = target*2
   const pageBudgetPx = printableHeight * pxPerPt;
 
   let pageIdx = 0;
