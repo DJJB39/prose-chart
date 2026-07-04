@@ -57,10 +57,6 @@ export async function exportReportToPdf(node: HTMLElement, filename = "veritas-r
 
   const paper = currentPaperColor();
 
-  // Each direct child of the article is a "block" we refuse to split.
-  const blocks = Array.from(node.children).filter((c): c is HTMLElement => c instanceof HTMLElement);
-  const canvases = await Promise.all(blocks.map((el) => captureBlock(el, paper)));
-
   // All blocks captured at the same target width so relative scaling
   // matches the on-screen layout and pxPerPt is uniform.
   const targetWidth = node.clientWidth;
