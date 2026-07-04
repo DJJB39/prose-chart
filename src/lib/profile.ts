@@ -1,12 +1,19 @@
 // Dataset profiling. Detects column types, ranges, and top categories from
-// a parsed table. The profile is what we'd send to Claude in Phase 3, and
-// what powers empty/incompatible-dataset checks now.
+// a parsed table. Also tags every column with a semantic ROLE so the model
+// and validator can choose metrics discipline-agnostically:
+//
+//   measure     numeric, summable (revenue, units)
+//   identifier  high-cardinality key or id-like name (MPAN, customer_id)
+//   dimension   low-cardinality categorical, used for group-by
+//   temporal    parseable dates, used as time axis
 
 export type ColumnType = "date" | "numeric" | "categorical" | "id";
+export type ColumnRole = "measure" | "identifier" | "dimension" | "temporal";
 
 export type ColumnProfile = {
   name: string;
   type: ColumnType;
+  role: ColumnRole;
   cardinality: number;
   min: string | number | null;
   max: string | number | null;
@@ -27,7 +34,7 @@ const UK_DATE = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/;
 /** Best-effort parse for UK date strings and ISO strings. Returns ms or null. */
 export function parseMaybeDate(v: unknown): number | null {
   if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v.getTime();
-  if (typeof v === "number") return null; // don't treat plain numbers as dates
+  if (typeof v === "number") return null;
   if (typeof v !== "string") return null;
   const s = v.trim();
   if (!s) return null;
@@ -47,7 +54,19 @@ export function parseMaybeDate(v: unknown): number | null {
 
 function isIdName(name: string): boolean {
   const n = name.toLowerCase();
-  return n === "id" || n.endsWith("_id") || n.endsWith(" id") || n === "code" || n === "sku";
+  return (
+    n === "id" ||
+    n.endsWith("_id") ||
+    n.endsWith(" id") ||
+    n === "code" ||
+    n === "sku" ||
+    n === "mpan" ||
+    n === "ref" ||
+    n === "reference" ||
+    n === "uuid" ||
+    n.endsWith("_ref") ||
+    n.endsWith("_code")
+  );
 }
 
 function detectType(name: string, values: unknown[]): ColumnType {
@@ -57,7 +76,6 @@ function detectType(name: string, values: unknown[]): ColumnType {
   if (dateHits / nonNull.length > 0.8) return "date";
   const numHits = nonNull.filter((v) => typeof v === "number" || (typeof v === "string" && v.trim() !== "" && !Number.isNaN(Number(v)))).length;
   if (numHits / nonNull.length > 0.9) {
-    // Leading-zero string columns and id-like names stay as ids/categoricals.
     const leadingZero = nonNull.some((v) => typeof v === "string" && /^0\d+/.test(v));
     if (leadingZero || isIdName(name)) return "id";
     return "numeric";
@@ -67,9 +85,27 @@ function detectType(name: string, values: unknown[]): ColumnType {
   return "categorical";
 }
 
+function classifyRole(
+  name: string,
+  type: ColumnType,
+  cardinality: number,
+  rowCount: number,
+): ColumnRole {
+  if (type === "date") return "temporal";
+  if (type === "id") return "identifier";
+  // Very high cardinality + id-like name → identifier even if numeric/categorical.
+  const highCard = rowCount > 0 && cardinality / rowCount > 0.6;
+  if (highCard && isIdName(name)) return "identifier";
+  // Extremely high-cardinality numeric with id-like name (MPANs stored as ints) → identifier.
+  if (type === "numeric" && highCard && isIdName(name)) return "identifier";
+  if (type === "numeric" && cardinality > 1) return "measure";
+  return "dimension";
+}
+
 export function profileDataset(rows: Row[]): DatasetProfile {
   if (rows.length === 0) return { columns: [], rowCount: 0 };
   const names = Object.keys(rows[0]);
+  const rowCount = rows.length;
   const columns: ColumnProfile[] = names.map((name) => {
     const values = rows.map((r) => r[name]);
     const type = detectType(name, values);
@@ -87,7 +123,6 @@ export function profileDataset(rows: Row[]): DatasetProfile {
         max = new Date(Math.max(...ts)).toISOString().slice(0, 10);
       }
     }
-    // Cardinality + top categories
     const counts = new Map<string, number>();
     for (const v of nonNull) {
       const k = String(v);
@@ -98,15 +133,24 @@ export function profileDataset(rows: Row[]): DatasetProfile {
       type === "categorical"
         ? [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([value, count]) => ({ value, count }))
         : [];
-    return { name, type, cardinality, min, max, null_pct, top_categories };
+    const role = classifyRole(name, type, cardinality, rowCount);
+    return { name, type, role, cardinality, min, max, null_pct, top_categories };
   });
-  return { columns, rowCount: rows.length };
+  return { columns, rowCount };
 }
 
 export function findColumn(profile: DatasetProfile, type: ColumnType): ColumnProfile | undefined {
   return profile.columns.find((c) => c.type === type);
 }
 
+export function findByRole(profile: DatasetProfile, role: ColumnRole): ColumnProfile | undefined {
+  return profile.columns.find((c) => c.role === role);
+}
+
 export function hasNumericColumn(profile: DatasetProfile): boolean {
   return profile.columns.some((c) => c.type === "numeric");
+}
+
+export function hasMeasure(profile: DatasetProfile): boolean {
+  return profile.columns.some((c) => c.role === "measure");
 }

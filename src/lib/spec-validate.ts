@@ -1,18 +1,35 @@
 // Profile-aware validation for a ReportSpec. Runs AFTER Zod parses the
-// structural shape. Rejects specs that reference columns that do not exist
-// in the dataset, or that ask for numeric aggregations on non-numeric
-// columns. Silently drops series bindings whose cardinality would blow up
-// a legend rather than failing the whole report.
+// structural shape. Rejects specs whose aggregation is invalid for the
+// column's semantic ROLE — no silent substitutions. The validator's job
+// is to fail loud so /api/compose can retry the model with the reason,
+// and the section-level error boundary can show its editorial fallback
+// rather than a wrong number.
 
-import type { DatasetProfile } from "./profile";
+import type { ColumnRole, DatasetProfile } from "./profile";
+import type { Agg } from "./aggregate";
 import type { ReportSpec } from "./spec";
 
 export type ValidationResult =
   | { ok: true; spec: ReportSpec; warnings: string[] }
   | { ok: false; errors: string[] };
 
-const NUMERIC_AGGS = new Set(["sum", "avg", "min", "max"]);
-// distinct_count and count are valid on any column type.
+// Role/agg compatibility matrix. Anything not listed is rejected.
+const COMPAT: Record<Agg, ColumnRole[]> = {
+  sum: ["measure"],
+  avg: ["measure"],
+  min: ["measure"],
+  max: ["measure"],
+  percent_of_total: ["measure", "identifier", "dimension", "temporal"],
+  // ^ percent_of_total operates on row shape (share of total), so it is
+  //   role-agnostic here; the column just names the bucket target.
+  count: ["measure", "identifier", "dimension", "temporal"],
+  distinct_count: ["measure", "identifier", "dimension", "temporal"],
+  null_count: ["measure", "identifier", "dimension", "temporal"],
+  non_null_count: ["measure", "identifier", "dimension", "temporal"],
+};
+
+// Aggs that would silently misrepresent an identifier: summing MPANs, etc.
+const IDENTIFIER_FORBIDDEN = new Set<Agg>(["sum", "avg", "min", "max"]);
 
 export function validateSpec(spec: ReportSpec, profile: DatasetProfile): ValidationResult {
   const errors: string[] = [];
@@ -22,17 +39,32 @@ export function validateSpec(spec: ReportSpec, profile: DatasetProfile): Validat
   const need = (col: string, where: string) => {
     if (!byName.has(col)) errors.push(`${where}: column "${col}" not in dataset`);
   };
-  const needNumeric = (col: string, agg: string, where: string) => {
-    if (!NUMERIC_AGGS.has(agg)) return;
+
+  const checkAgg = (col: string, agg: Agg, where: string) => {
     const c = byName.get(col);
-    if (c && c.type !== "numeric") {
-      errors.push(`${where}: "${agg}" needs numeric column, "${col}" is ${c.type}`);
+    if (!c) return; // already reported by need()
+    const allowed = COMPAT[agg];
+    if (!allowed) {
+      errors.push(`${where}: unknown aggregation "${agg}"`);
+      return;
+    }
+    if (!allowed.includes(c.role)) {
+      errors.push(
+        `${where}: "${agg}" is not valid on ${c.role} column "${col}". ` +
+          `Use one of ${COMPAT.count.includes(c.role) ? '"count", "distinct_count", "null_count", "non_null_count"' : '"sum", "avg", "min", "max"'}.`,
+      );
+      return;
+    }
+    if (c.role === "identifier" && IDENTIFIER_FORBIDDEN.has(agg)) {
+      errors.push(
+        `${where}: "${agg}" on identifier column "${col}" would silently misrepresent an id. Use "distinct_count" for unique-value counts or "count" for row totals.`,
+      );
     }
   };
 
   for (const k of spec.kpis) {
     need(k.value_expr.column, `kpi "${k.label}"`);
-    needNumeric(k.value_expr.column, k.value_expr.agg, `kpi "${k.label}"`);
+    checkAgg(k.value_expr.column, k.value_expr.agg as Agg, `kpi "${k.label}"`);
     if (k.value_expr.filter) need(k.value_expr.filter.column, `kpi "${k.label}" filter`);
   }
 
@@ -40,8 +72,9 @@ export function validateSpec(spec: ReportSpec, profile: DatasetProfile): Validat
     const c = s.chart;
     need(c.x, `section "${s.heading}" x`);
     need(c.y, `section "${s.heading}" y`);
-    needNumeric(c.y, c.agg, `section "${s.heading}"`);
+    checkAgg(c.y, c.agg as Agg, `section "${s.heading}"`);
     if (c.filter) need(c.filter.column, `section "${s.heading}" filter`);
+
     let series = c.series;
     let type = c.type;
     if (series) {
@@ -49,11 +82,12 @@ export function validateSpec(spec: ReportSpec, profile: DatasetProfile): Validat
       if (!sc) {
         errors.push(`section "${s.heading}": series column "${series}" not in dataset`);
       } else if (sc.cardinality > 8) {
+        // Rendering constraint (legend blows up), NOT a metric substitution.
+        // The metric requested by the model is preserved on the x axis.
         warnings.push(`section "${s.heading}": dropped series "${series}" (cardinality ${sc.cardinality} > 8)`);
         series = undefined;
       }
     }
-    // A stacked_bar without a series is undefined — downgrade to a plain bar.
     if (type === "stacked_bar" && !series) {
       warnings.push(`section "${s.heading}": stacked_bar with no series → downgraded to bar`);
       type = "bar";
