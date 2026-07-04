@@ -12,6 +12,7 @@ import { SingleStat } from "./charts/SingleStat";
 import { StackedBar } from "./charts/StackedBar";
 import { KpiCard } from "./KpiCard";
 import { ReportSection } from "./ReportSection";
+import { SectionBoundary } from "./SectionBoundary";
 import { TitleBlock } from "./TitleBlock";
 
 type Props = { prepared: PreparedReport };
