@@ -67,6 +67,12 @@ CONSTRAINTS
 - series must be a categorical column with cardinality ≤ 8.
 - Prefer a date column for x on time-based charts; use it as the natural spine.
 - Distinct cuts per section: do not repeat the same x/y/series combination.
+- If profile.columns contains NO column of type "numeric", you MUST use
+  agg: "count" for every KPI value_expr and every chart. In that case
+  set value_expr.column and chart.y to ANY column that exists in the
+  profile — count works on any column and the app counts rows. Never
+  invent a numeric column, never emit sum/avg/min/max, and never
+  reference a column name that is not in profile.columns.
 - generated_summary and insight_sentence describe STRUCTURE — direction, spread,
   concentration, cadence, outliers. Never state a total, average, percentage, or
   ranking figure. The app writes numbers; you write judgement.
