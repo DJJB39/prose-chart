@@ -5,12 +5,10 @@ import { EntrySurface } from "@/components/entry/EntrySurface";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ExportBar } from "@/components/report/ExportBar";
 import { Report } from "@/components/report/Report";
-import { autoSpec } from "@/lib/auto-spec";
 import { sampleMeta, sampleRows } from "@/lib/sample-data";
-import { sampleSpec } from "@/lib/hardcoded-spec";
 import { parseFile } from "@/lib/parse";
 import { hasNumericColumn, profileDataset } from "@/lib/profile";
-import type { ReportSpec } from "@/lib/spec";
+import { ReportSpecSchema, type ReportSpec } from "@/lib/spec";
 import type { Row } from "@/lib/aggregate";
 
 export const Route = createFileRoute("/")({
@@ -46,6 +44,25 @@ function VeritasApp() {
   const [loading, setLoading] = useState(false);
   const reportRef = useRef<HTMLElement>(null);
 
+  async function composeVia(brief: string, rows: Row[], filename: string) {
+    const profile = profileDataset(rows);
+    if (!hasNumericColumn(profile)) {
+      throw new Error(
+        "This dataset has no numeric column, so there is nothing to aggregate. A useful Veritas report needs at least one measure — revenue, a count, a rate — to compose against.",
+      );
+    }
+    const res = await fetch("/api/compose", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ brief: brief.trim() || "Compose the most useful report the columns support.", source_filename: filename, profile }),
+    });
+    const data = (await res.json().catch(() => ({}))) as { spec?: unknown; error?: string; provider?: string; retried?: boolean };
+    if (!res.ok) throw new Error(data.error || `Compose failed (${res.status})`);
+    const spec = ReportSpecSchema.parse(data.spec);
+    console.log(`[Veritas] rendered via ${data.provider}${data.retried ? " (retried)" : ""}`);
+    return { spec, rows, brief, sourceFilename: filename };
+  }
+
   async function handleSubmit(brief: string, file: File | null) {
     setError(null);
     if (!file) return;
@@ -56,35 +73,28 @@ function VeritasApp() {
         setError("The file parsed cleanly but contained no data rows beneath its header.");
         return;
       }
-      const profile = profileDataset(parsed.rows);
-      if (!hasNumericColumn(profile)) {
-        setError(
-          "This dataset has no numeric column, so there is nothing to aggregate. A useful Veritas report needs at least one measure — revenue, a count, a rate — to compose against.",
-        );
-        return;
-      }
-      const spec = autoSpec(profile, brief, parsed.filename);
-      if (!spec) {
-        setError("The dataset does not carry a shape Veritas can compose a report from.");
-        return;
-      }
-      setComposed({ spec, rows: parsed.rows as Row[], brief, sourceFilename: parsed.filename });
+      const c = await composeVia(brief, parsed.rows as Row[], parsed.filename);
+      setComposed(c);
     } catch (err) {
       console.error(err);
-      setError("The file could not be parsed. Veritas accepts .csv and .xlsx.");
+      setError(err instanceof Error ? err.message : "Veritas could not compose this report.");
     } finally {
       setLoading(false);
     }
   }
 
-  function handleTrySample() {
+  async function handleTrySample() {
     setError(null);
-    setComposed({
-      spec: sampleSpec,
-      rows: sampleRows as unknown as Row[],
-      brief: sampleMeta.brief,
-      sourceFilename: sampleMeta.source_filename,
-    });
+    setLoading(true);
+    try {
+      const c = await composeVia(sampleMeta.brief, sampleRows as unknown as Row[], sampleMeta.source_filename);
+      setComposed(c);
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : "Veritas could not compose the sample report.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   if (!composed) {
