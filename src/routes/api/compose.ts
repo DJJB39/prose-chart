@@ -30,21 +30,36 @@ const RequestSchema = z.object({
   }),
 });
 
+const ClarificationSchema = z.object({
+  needs_clarification: z.literal(true),
+  question: z.string().min(3).max(300),
+  options: z.array(z.string().min(1).max(120)).min(2).max(4).optional(),
+});
+
+type AttemptOk =
+  | { ok: true; kind: "spec"; spec: import("@/lib/spec").ReportSpec; warnings: string[] }
+  | { ok: true; kind: "clarification"; question: string; options?: string[] };
+
 async function attempt(
   input: z.infer<typeof RequestSchema>,
   retry_reason?: string,
-): Promise<
-  | { ok: true; spec: import("@/lib/spec").ReportSpec; warnings: string[] }
-  | { ok: false; reason: string }
-> {
+): Promise<AttemptOk | { ok: false; reason: string }> {
   const { raw } = await callProvider({ ...input, retry_reason });
+
+  // Clarification path first — cheap discriminator and it can't be mistaken
+  // for a ReportSpec (no report_title).
+  const asClar = ClarificationSchema.safeParse(raw);
+  if (asClar.success) {
+    return { ok: true, kind: "clarification", question: asClar.data.question, options: asClar.data.options };
+  }
+
   const parsed = ReportSpecSchema.safeParse(raw);
   if (!parsed.success) {
     return { ok: false, reason: `Zod: ${parsed.error.issues.slice(0, 4).map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}` };
   }
   const check = validateSpec(parsed.data, input.profile);
   if (!check.ok) return { ok: false, reason: `Profile: ${check.errors.join("; ")}` };
-  return { ok: true, spec: check.spec, warnings: check.warnings };
+  return { ok: true, kind: "spec", spec: check.spec, warnings: check.warnings };
 }
 
 export const Route = createFileRoute("/api/compose")({
@@ -80,6 +95,14 @@ export const Route = createFileRoute("/api/compose")({
               },
               { status: 422 },
             );
+          }
+          if (result.kind === "clarification") {
+            console.log(`[Veritas] clarification requested via ${provider} in ${Date.now() - started}ms: ${result.question}`);
+            return Response.json({
+              clarification: { question: result.question, options: result.options ?? null },
+              provider,
+              retried,
+            });
           }
           console.log(`[Veritas] composed via ${provider} in ${Date.now() - started}ms (retried=${retried})${result.warnings.length ? `; warnings: ${result.warnings.join(" | ")}` : ""}`);
           return Response.json({ spec: result.spec, provider, retried, warnings: result.warnings });
