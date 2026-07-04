@@ -1,15 +1,19 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 
+import { EntrySurface } from "@/components/entry/EntrySurface";
 import { ExportBar } from "@/components/report/ExportBar";
-import { KpiCard } from "@/components/report/KpiCard";
-import { TitleBlock } from "@/components/report/TitleBlock";
-import { LineChart } from "@/components/report/charts/LineChart";
-import { formatMonth } from "@/lib/format";
+import { Report } from "@/components/report/Report";
+import { autoSpec } from "@/lib/auto-spec";
 import { sampleMeta, sampleRows } from "@/lib/sample-data";
+import { sampleSpec } from "@/lib/hardcoded-spec";
+import { parseFile } from "@/lib/parse";
+import { hasNumericColumn, profileDataset } from "@/lib/profile";
+import type { ReportSpec } from "@/lib/spec";
+import type { Row } from "@/lib/aggregate";
 
 export const Route = createFileRoute("/")({
-  component: Phase1Report,
+  component: VeritasApp,
   head: () => ({
     meta: [
       { title: "Veritas — Editorial reports from your data" },
@@ -28,75 +32,100 @@ export const Route = createFileRoute("/")({
   }),
 });
 
-function Phase1Report() {
+type Composed = {
+  spec: ReportSpec;
+  rows: Row[];
+  brief: string;
+  sourceFilename: string;
+};
+
+function VeritasApp() {
+  const [composed, setComposed] = useState<Composed | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const reportRef = useRef<HTMLElement>(null);
 
-  // Full-dataset aggregates. The app owns every number; the AI never does arithmetic.
-  const totalRevenue = sampleRows.reduce((s, r) => s + r.revenue_gbp, 0);
-  const chartData = sampleRows.map((r) => ({ x: r.month, y: r.revenue_gbp }));
+  async function handleSubmit(brief: string, file: File | null) {
+    setError(null);
+    if (!file) return;
+    setLoading(true);
+    try {
+      const parsed = await parseFile(file);
+      if (parsed.rows.length === 0) {
+        setError("The file parsed cleanly but contained no data rows beneath its header.");
+        return;
+      }
+      const profile = profileDataset(parsed.rows);
+      if (!hasNumericColumn(profile)) {
+        setError(
+          "This dataset has no numeric column, so there is nothing to aggregate. A useful Veritas report needs at least one measure — revenue, a count, a rate — to compose against.",
+        );
+        return;
+      }
+      const spec = autoSpec(profile, brief, parsed.filename);
+      if (!spec) {
+        setError("The dataset does not carry a shape Veritas can compose a report from.");
+        return;
+      }
+      setComposed({ spec, rows: parsed.rows as Row[], brief, sourceFilename: parsed.filename });
+    } catch (err) {
+      console.error(err);
+      setError("The file could not be parsed. Veritas accepts .csv and .xlsx.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleTrySample() {
+    setError(null);
+    setComposed({
+      spec: sampleSpec,
+      rows: sampleRows as unknown as Row[],
+      brief: sampleMeta.brief,
+      sourceFilename: sampleMeta.source_filename,
+    });
+  }
+
+  if (!composed) {
+    return (
+      <div className="min-h-screen bg-paper text-ink">
+        <div className="no-print flex items-center justify-end gap-3 px-8 py-4">
+          {/* Theme toggle available even on the entry surface. */}
+          <ThemeSlot />
+        </div>
+        <EntrySurface
+          onSubmit={handleSubmit}
+          onTrySample={handleTrySample}
+          error={error}
+          loading={loading}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-paper text-ink">
-      <ExportBar targetRef={reportRef} />
-      <main className="mx-auto max-w-[880px] px-8 py-10">
-        <article ref={reportRef} className="bg-paper">
-          <TitleBlock
-            title={sampleMeta.title}
-            sourceFilename={sampleMeta.source_filename}
-            brief={sampleMeta.brief}
-          />
-
-          <section
-            className="mt-10"
-            style={{ breakInside: "avoid", pageBreakInside: "avoid" }}
-          >
-            <div className="mb-4 flex items-baseline justify-between border-b border-ink/10 pb-2">
-              <h2 className="text-[11px] uppercase tracking-[0.22em] text-ink-muted">
-                Headline
-              </h2>
-              <span className="text-[11px] text-ink-muted tabular">01</span>
-            </div>
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-              <KpiCard
-                label="Total revenue"
-                value={totalRevenue}
-                format="currency"
-                footnote={`Aggregated across ${sampleRows.length} months.`}
-              />
-              <KpiCard
-                label="Latest month"
-                value={sampleRows[sampleRows.length - 1].revenue_gbp}
-                format="currency"
-                footnote={formatMonth(sampleRows[sampleRows.length - 1].month)}
-              />
-            </div>
-          </section>
-
-          <section
-            className="mt-10"
-            style={{ breakInside: "avoid", pageBreakInside: "avoid" }}
-          >
-            <div className="mb-4 flex items-baseline justify-between border-b border-ink/10 pb-2">
-              <h2 className="text-[11px] uppercase tracking-[0.22em] text-ink-muted">
-                Revenue over time
-              </h2>
-              <span className="text-[11px] text-ink-muted tabular">02</span>
-            </div>
-            <p className="mb-5 max-w-[58ch] font-serif text-[19px] leading-[1.4] text-ink">
-              Monthly revenue across the twenty-four months to June 2025. The chart shows the
-              trajectory and where it accelerates.
-            </p>
-            <LineChart data={chartData} yFormat="currency" xTickFormatter={formatMonth} height={260} />
-          </section>
-
-          <footer className="mt-8 border-t border-ink/10 pt-4 text-[11px] uppercase tracking-[0.2em] text-ink-muted">
-            <div className="flex items-center justify-between">
-              <span>Veritas · Phase 1 acceptance gate</span>
-              <span className="tabular">A4 portrait</span>
-            </div>
-          </footer>
-        </article>
+      <ExportBar
+        targetRef={reportRef}
+        filename={`veritas-${composed.sourceFilename.replace(/\.[^.]+$/, "")}.pdf`}
+        onReset={() => setComposed(null)}
+      />
+      <main className="mx-auto max-w-[900px] px-8 py-10">
+        <Report
+          ref={reportRef}
+          spec={composed.spec}
+          rows={composed.rows}
+          brief={composed.brief}
+          sourceFilename={composed.sourceFilename}
+        />
       </main>
     </div>
   );
+}
+
+function ThemeSlot() {
+  // Small wrapper — keeps SSR consistent (button label decided client-side).
+  // Import here to keep entry surface lean.
+  const ThemeToggle = require("@/components/ThemeToggle").ThemeToggle as React.FC;
+  return <ThemeToggle />;
 }
