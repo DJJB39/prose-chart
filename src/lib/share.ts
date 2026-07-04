@@ -12,6 +12,8 @@ import {
   aggregateScalar,
   aggregateSeries,
   aggregateStacked,
+  blankCount,
+  isBlank,
   trendDirection,
   type Row,
 } from "@/lib/aggregate";
