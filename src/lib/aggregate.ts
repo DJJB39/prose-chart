@@ -126,6 +126,7 @@ export function aggregateStacked(
   const seriesOrder: string[] = [];
   const seen = new Set<string>();
   for (const r of rows) {
+    if (isBlank(r[x]) || isBlank(r[series])) continue;
     const xk = String(r[x]);
     const sk = String(r[series]);
     if (!seen.has(sk)) { seen.add(sk); seriesOrder.push(sk); }
