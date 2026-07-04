@@ -5,12 +5,10 @@ import { EntrySurface } from "@/components/entry/EntrySurface";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ExportBar } from "@/components/report/ExportBar";
 import { Report } from "@/components/report/Report";
-import { autoSpec } from "@/lib/auto-spec";
 import { sampleMeta, sampleRows } from "@/lib/sample-data";
-import { sampleSpec } from "@/lib/hardcoded-spec";
 import { parseFile } from "@/lib/parse";
 import { hasNumericColumn, profileDataset } from "@/lib/profile";
-import type { ReportSpec } from "@/lib/spec";
+import { ReportSpecSchema, type ReportSpec } from "@/lib/spec";
 import type { Row } from "@/lib/aggregate";
 
 export const Route = createFileRoute("/")({
