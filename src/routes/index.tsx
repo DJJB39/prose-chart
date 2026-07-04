@@ -8,7 +8,8 @@ import { Report } from "@/components/report/Report";
 import { sampleMeta, sampleRows } from "@/lib/sample-data";
 import { parseFile } from "@/lib/parse";
 import { hasNumericColumn, profileDataset } from "@/lib/profile";
-import { ReportSpecSchema, type ReportSpec } from "@/lib/spec";
+import { ReportSpecSchema } from "@/lib/spec";
+import { prepareReport, type PreparedReport } from "@/lib/share";
 import type { Row } from "@/lib/aggregate";
 
 export const Route = createFileRoute("/")({
@@ -31,15 +32,8 @@ export const Route = createFileRoute("/")({
   }),
 });
 
-type Composed = {
-  spec: ReportSpec;
-  rows: Row[];
-  brief: string;
-  sourceFilename: string;
-};
-
 function VeritasApp() {
-  const [composed, setComposed] = useState<Composed | null>(null);
+  const [prepared, setPrepared] = useState<PreparedReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const reportRef = useRef<HTMLElement>(null);
@@ -54,13 +48,22 @@ function VeritasApp() {
     const res = await fetch("/api/compose", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ brief: brief.trim() || "Compose the most useful report the columns support.", source_filename: filename, profile }),
+      body: JSON.stringify({
+        brief: brief.trim() || "Compose the most useful report the columns support.",
+        source_filename: filename,
+        profile,
+      }),
     });
-    const data = (await res.json().catch(() => ({}))) as { spec?: unknown; error?: string; provider?: string; retried?: boolean };
+    const data = (await res.json().catch(() => ({}))) as {
+      spec?: unknown;
+      error?: string;
+      provider?: string;
+      retried?: boolean;
+    };
     if (!res.ok) throw new Error(data.error || `Compose failed (${res.status})`);
     const spec = ReportSpecSchema.parse(data.spec);
     console.log(`[Veritas] rendered via ${data.provider}${data.retried ? " (retried)" : ""}`);
-    return { spec, rows, brief, sourceFilename: filename };
+    return prepareReport(spec, rows, { sourceFilename: filename, brief });
   }
 
   async function handleSubmit(brief: string, file: File | null) {
@@ -73,8 +76,8 @@ function VeritasApp() {
         setError("The file parsed cleanly but contained no data rows beneath its header.");
         return;
       }
-      const c = await composeVia(brief, parsed.rows as Row[], parsed.filename);
-      setComposed(c);
+      const p = await composeVia(brief, parsed.rows as Row[], parsed.filename);
+      setPrepared(p);
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : "Veritas could not compose this report.");
@@ -87,8 +90,8 @@ function VeritasApp() {
     setError(null);
     setLoading(true);
     try {
-      const c = await composeVia(sampleMeta.brief, sampleRows as unknown as Row[], sampleMeta.source_filename);
-      setComposed(c);
+      const p = await composeVia(sampleMeta.brief, sampleRows as unknown as Row[], sampleMeta.source_filename);
+      setPrepared(p);
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : "Veritas could not compose the sample report.");
@@ -97,7 +100,7 @@ function VeritasApp() {
     }
   }
 
-  if (!composed) {
+  if (!prepared) {
     return (
       <div className="min-h-screen bg-paper text-ink">
         <div className="no-print flex items-center justify-end gap-3 px-8 py-4">
@@ -117,19 +120,13 @@ function VeritasApp() {
     <div className="min-h-screen bg-paper text-ink">
       <ExportBar
         targetRef={reportRef}
-        filename={`veritas-${composed.sourceFilename.replace(/\.[^.]+$/, "")}.pdf`}
-        onReset={() => setComposed(null)}
+        filename={`veritas-${prepared.sourceFilename.replace(/\.[^.]+$/, "")}.pdf`}
+        onReset={() => setPrepared(null)}
+        prepared={prepared}
       />
       <main className="mx-auto max-w-[900px] px-8 py-10">
-        <Report
-          ref={reportRef}
-          spec={composed.spec}
-          rows={composed.rows}
-          brief={composed.brief}
-          sourceFilename={composed.sourceFilename}
-        />
+        <Report ref={reportRef} prepared={prepared} />
       </main>
     </div>
   );
 }
-

@@ -10,11 +10,17 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as SharePayloadRouteImport } from './routes/share.$payload'
 import { Route as ApiComposeRouteImport } from './routes/api/compose'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SharePayloadRoute = SharePayloadRouteImport.update({
+  id: '/share/$payload',
+  path: '/share/$payload',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiComposeRoute = ApiComposeRouteImport.update({
@@ -26,27 +32,31 @@ const ApiComposeRoute = ApiComposeRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/compose': typeof ApiComposeRoute
+  '/share/$payload': typeof SharePayloadRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/compose': typeof ApiComposeRoute
+  '/share/$payload': typeof SharePayloadRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/api/compose': typeof ApiComposeRoute
+  '/share/$payload': typeof SharePayloadRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/compose'
+  fullPaths: '/' | '/api/compose' | '/share/$payload'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/compose'
-  id: '__root__' | '/' | '/api/compose'
+  to: '/' | '/api/compose' | '/share/$payload'
+  id: '__root__' | '/' | '/api/compose' | '/share/$payload'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiComposeRoute: typeof ApiComposeRoute
+  SharePayloadRoute: typeof SharePayloadRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -56,6 +66,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/share/$payload': {
+      id: '/share/$payload'
+      path: '/share/$payload'
+      fullPath: '/share/$payload'
+      preLoaderRoute: typeof SharePayloadRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/compose': {
@@ -71,6 +88,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiComposeRoute: ApiComposeRoute,
+  SharePayloadRoute: SharePayloadRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
