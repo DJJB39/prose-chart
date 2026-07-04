@@ -81,9 +81,11 @@ export const Report = forwardRef<HTMLElement, Props>(function Report({ prepared 
         }
 
         return (
-          <ReportSection key={i} index={idx} heading={section.heading} insight={section.insight}>
-            {body}
-          </ReportSection>
+          <SectionBoundary key={i} heading={section.heading}>
+            <ReportSection index={idx} heading={section.heading} insight={section.insight}>
+              {body}
+            </ReportSection>
+          </SectionBoundary>
         );
       })}
 
