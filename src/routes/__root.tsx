@@ -91,6 +91,12 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:title", content: "Veritas — Editorial reports from your data" },
+      { name: "description", content: "Turn a spreadsheet and a plain-English brief into a report you would be happy to hand to a board." },
+      { property: "og:description", content: "Turn a spreadsheet and a plain-English brief into a report you would be happy to hand to a board." },
+      { name: "twitter:description", content: "Turn a spreadsheet and a plain-English brief into a report you would be happy to hand to a board." },
+      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/1161d65a-16af-4e0f-86d9-205e7c8cb19a/id-preview-fc9d93fd--afec3c96-ed1c-4d30-ace2-907e356aa3d6.lovable.app-1783195089095.png" },
+      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/1161d65a-16af-4e0f-86d9-205e7c8cb19a/id-preview-fc9d93fd--afec3c96-ed1c-4d30-ace2-907e356aa3d6.lovable.app-1783195089095.png" },
     ],
     links: [
       {
