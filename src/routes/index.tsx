@@ -32,13 +32,17 @@ export const Route = createFileRoute("/")({
   }),
 });
 
+type Clarification = { question: string; options: string[] | null };
+
 function VeritasApp() {
   const [prepared, setPrepared] = useState<PreparedReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [clarification, setClarification] = useState<Clarification | null>(null);
+  const pendingRef = useRef<{ brief: string; rows: Row[]; filename: string } | null>(null);
   const reportRef = useRef<HTMLElement>(null);
 
-  async function composeVia(brief: string, rows: Row[], filename: string) {
+  async function composeVia(brief: string, rows: Row[], filename: string): Promise<PreparedReport | "clarification"> {
     const profile = profileDataset(rows);
     const res = await fetch("/api/compose", {
       method: "POST",
@@ -51,11 +55,17 @@ function VeritasApp() {
     });
     const data = (await res.json().catch(() => ({}))) as {
       spec?: unknown;
+      clarification?: { question: string; options: string[] | null };
       error?: string;
       provider?: string;
       retried?: boolean;
     };
     if (!res.ok) throw new Error(data.error || `Compose failed (${res.status})`);
+    if (data.clarification) {
+      pendingRef.current = { brief, rows, filename };
+      setClarification(data.clarification);
+      return "clarification";
+    }
     const spec = ReportSpecSchema.parse(data.spec);
     console.log(`[Veritas] rendered via ${data.provider}${data.retried ? " (retried)" : ""}`);
     return prepareReport(spec, rows, { sourceFilename: filename, brief });
@@ -63,6 +73,7 @@ function VeritasApp() {
 
   async function handleSubmit(brief: string, file: File | null) {
     setError(null);
+    setClarification(null);
     if (!file) return;
     setLoading(true);
     try {
@@ -71,8 +82,8 @@ function VeritasApp() {
         setError("The file parsed cleanly but contained no data rows beneath its header.");
         return;
       }
-      const p = await composeVia(brief, parsed.rows as Row[], parsed.filename);
-      setPrepared(p);
+      const result = await composeVia(brief, parsed.rows as Row[], parsed.filename);
+      if (result !== "clarification") setPrepared(result);
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : "Veritas could not compose this report.");
@@ -83,13 +94,36 @@ function VeritasApp() {
 
   async function handleTrySample() {
     setError(null);
+    setClarification(null);
     setLoading(true);
     try {
-      const p = await composeVia(sampleMeta.brief, sampleRows as unknown as Row[], sampleMeta.source_filename);
-      setPrepared(p);
+      const result = await composeVia(sampleMeta.brief, sampleRows as unknown as Row[], sampleMeta.source_filename);
+      if (result !== "clarification") setPrepared(result);
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : "Veritas could not compose the sample report.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleClarificationAnswer(answer: string) {
+    const pending = pendingRef.current;
+    const q = clarification?.question;
+    if (!pending || !q || !answer.trim()) return;
+    setClarification(null);
+    setLoading(true);
+    setError(null);
+    const appendedBrief = `${pending.brief}\n\nClarification — Q: ${q}\nA: ${answer.trim()}`;
+    try {
+      const result = await composeVia(appendedBrief, pending.rows, pending.filename);
+      if (result !== "clarification") {
+        pendingRef.current = null;
+        setPrepared(result);
+      }
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : "Veritas could not compose this report.");
     } finally {
       setLoading(false);
     }
@@ -106,6 +140,8 @@ function VeritasApp() {
           onTrySample={handleTrySample}
           error={error}
           loading={loading}
+          clarification={clarification}
+          onAnswerClarification={handleClarificationAnswer}
         />
       </div>
     );
