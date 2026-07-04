@@ -17,7 +17,12 @@ import { jsPDF } from "jspdf";
 const A4_WIDTH_PT = 595.28;
 const A4_HEIGHT_PT = 841.89;
 const MARGIN_PT = 36; // ~12.7mm — editorial breathing room, standard book margin
-const PAPER = "#faf9f6";
+
+function currentPaperColor(): string {
+  if (typeof window === "undefined") return "#faf9f6";
+  const v = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
+  return v || "#faf9f6";
+}
 
 export async function exportReportToPdf(node: HTMLElement, filename = "veritas-report.pdf") {
   if (typeof document === "undefined") return;
