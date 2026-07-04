@@ -5,12 +5,13 @@ type TitleBlockProps = {
   sourceFilename: string;
   generatedAt?: Date;
   brief?: string;
+  summary?: string;
 };
 
-export function TitleBlock({ title, sourceFilename, generatedAt, brief }: TitleBlockProps) {
+export function TitleBlock({ title, sourceFilename, generatedAt, brief, summary }: TitleBlockProps) {
   const date = formatGeneratedAt(generatedAt);
   return (
-    <header className="border-b border-ink/10 pb-10">
+    <header className="border-b border-ink/10 pb-10" style={{ breakInside: "avoid" }}>
       <div className="mb-6 flex items-center gap-3 text-[11px] uppercase tracking-[0.22em] text-ink-muted">
         <span className="tabular">Veritas</span>
         <span className="h-px w-8 bg-ink/25" />
@@ -24,11 +25,16 @@ export function TitleBlock({ title, sourceFilename, generatedAt, brief }: TitleB
           &ldquo;{brief}&rdquo;
         </p>
       ) : null}
+      {summary ? (
+        <p className="mt-8 max-w-[62ch] font-serif text-[19px] leading-[1.5] text-ink">
+          {summary}
+        </p>
+      ) : null}
       <dl className="mt-10 grid grid-cols-2 gap-x-8 gap-y-2 text-[12px] text-ink-muted sm:max-w-md">
         <dt className="uppercase tracking-[0.18em]">Source</dt>
         <dd className="tabular text-ink">{sourceFilename}</dd>
         <dt className="uppercase tracking-[0.18em]">Generated</dt>
-        <dd className="tabular text-ink">{date}</dd>
+        <dd className="tabular text-ink" suppressHydrationWarning>{date}</dd>
       </dl>
     </header>
   );
