@@ -12,6 +12,7 @@ export type ValidationResult =
   | { ok: false; errors: string[] };
 
 const NUMERIC_AGGS = new Set(["sum", "avg", "min", "max"]);
+// distinct_count and count are valid on any column type.
 
 export function validateSpec(spec: ReportSpec, profile: DatasetProfile): ValidationResult {
   const errors: string[] = [];

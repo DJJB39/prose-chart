@@ -4,7 +4,7 @@
 
 import { z } from "zod";
 
-export const AggSchema = z.enum(["sum", "avg", "count", "min", "max"]);
+export const AggSchema = z.enum(["sum", "avg", "count", "distinct_count", "min", "max"]);
 export const FormatSchema = z.enum(["currency", "number", "percent", "compact"]);
 export const ChartTypeSchema = z.enum([
   "line", "bar", "stacked_bar", "area", "donut", "horizontal_bar", "single_stat",

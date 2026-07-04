@@ -12,6 +12,8 @@ import {
   aggregateScalar,
   aggregateSeries,
   aggregateStacked,
+  blankCount,
+  isBlank,
   trendDirection,
   type Row,
 } from "@/lib/aggregate";
@@ -96,9 +98,15 @@ export function prepareReport(
 ): PreparedReport {
   const cats: string[] = [];
   for (const s of spec.sections) {
-    if (s.chart.series) cats.push(...uniqueOrdered(rows.map((r) => String(r[s.chart.series!]))));
+    if (s.chart.series) {
+      cats.push(
+        ...uniqueOrdered(rows.map((r) => String(r[s.chart.series!])).filter((v) => !isBlank(v))),
+      );
+    }
     if (s.chart.type === "donut" || s.chart.type === "horizontal_bar" || s.chart.type === "bar") {
-      cats.push(...uniqueOrdered(rows.map((r) => String(r[s.chart.x]))));
+      cats.push(
+        ...uniqueOrdered(rows.map((r) => String(r[s.chart.x])).filter((v) => !isBlank(v))),
+      );
     }
   }
   const colors = buildColorMap(uniqueOrdered(cats));
@@ -147,7 +155,26 @@ export function prepareReport(
       prepared = { type: flatType, data, yFormat, xIsMonth };
     }
 
-    return { heading: section.heading, insight: section.insight_sentence, chart: prepared };
+    // Data-quality note: if the chart groups by a categorical column and
+    // some rows are blank on it, surface that as an explicit line rather
+    // than plotting "null" as a category.
+    let insight = section.insight_sentence;
+    if (chart.type !== "single_stat") {
+      const missing = blankCount(scoped, chart.x);
+      if (missing > 0 && scoped.length > 0) {
+        const pct = ((missing / scoped.length) * 100).toFixed(1);
+        insight += ` ${missing.toLocaleString("en-GB")} of ${scoped.length.toLocaleString("en-GB")} records (${pct}%) have no ${chart.x} assigned and are excluded from this chart.`;
+      }
+      if (chart.series) {
+        const missingS = blankCount(scoped, chart.series);
+        if (missingS > 0 && scoped.length > 0) {
+          const pct = ((missingS / scoped.length) * 100).toFixed(1);
+          insight += ` ${missingS.toLocaleString("en-GB")} records (${pct}%) have no ${chart.series} assigned.`;
+        }
+      }
+    }
+
+    return { heading: section.heading, insight, chart: prepared };
   });
 
   return {
