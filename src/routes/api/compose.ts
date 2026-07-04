@@ -13,6 +13,7 @@ import { validateSpec } from "@/lib/spec-validate";
 const ColumnProfileSchema = z.object({
   name: z.string(),
   type: z.enum(["date", "numeric", "categorical", "id"]),
+  role: z.enum(["measure", "identifier", "dimension", "temporal"]),
   cardinality: z.number(),
   min: z.union([z.string(), z.number(), z.null()]),
   max: z.union([z.string(), z.number(), z.null()]),
