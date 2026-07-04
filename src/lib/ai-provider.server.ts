@@ -36,7 +36,7 @@ OUTPUT: a single JSON object, no prose around it, matching this schema:
     {
       "label": string,                               // short, human, no units
       "value_expr": {
-        "agg": "sum" | "avg" | "count" | "min" | "max",
+        "agg": "sum" | "avg" | "count" | "distinct_count" | "min" | "max",
         "column": string,                            // must exist in profile
         "filter": { "column": string, "equals": string }   // optional
       },
@@ -53,7 +53,7 @@ OUTPUT: a single JSON object, no prose around it, matching this schema:
         "x": string,                                 // column name from profile
         "y": string,                                 // column name from profile
         "series": string,                            // optional, categorical, cardinality ≤ 8
-        "agg": "sum" | "avg" | "count" | "min" | "max",
+        "agg": "sum" | "avg" | "count" | "min" | "max" | "distinct_count",
         "filter": { "column": string, "equals": string }   // optional
       }
     }
@@ -64,15 +64,26 @@ OUTPUT: a single JSON object, no prose around it, matching this schema:
 CONSTRAINTS
 - Use only column names that appear in profile.columns (case-sensitive).
 - sum/avg/min/max are only valid on numeric columns.
+- count returns the number of ROWS (optionally after a filter). Use it for
+  "how many records" measures.
+- distinct_count returns the number of UNIQUE non-blank values in the given
+  column. Use it whenever the KPI or chart means "how many different X"
+  (e.g. "Active Agents", "Installation Channels", "Unique Customers").
+  A KPI labelled as a count of a categorical entity MUST use
+  distinct_count on that entity's column, never count. count on the whole
+  dataset would just restate the row total under a misleading label.
 - series must be a categorical column with cardinality ≤ 8.
 - Prefer a date column for x on time-based charts; use it as the natural spine.
 - Distinct cuts per section: do not repeat the same x/y/series combination.
 - If profile.columns contains NO column of type "numeric", you MUST use
-  agg: "count" for every KPI value_expr and every chart. In that case
-  set value_expr.column and chart.y to ANY column that exists in the
-  profile — count works on any column and the app counts rows. Never
-  invent a numeric column, never emit sum/avg/min/max, and never
-  reference a column name that is not in profile.columns.
+  agg: "count" or "distinct_count" for every KPI value_expr and every chart.
+  In that case set value_expr.column and chart.y to a column that exists in
+  the profile. Never invent a numeric column, never emit sum/avg/min/max,
+  and never reference a column name that is not in profile.columns.
+- The app automatically excludes rows with blank/null values in the chart's
+  x (and series) column from the distribution, and surfaces the missing
+  count as a data-quality line. Do not treat "null" or blanks as a
+  category to plot or narrate.
 - generated_summary and insight_sentence describe STRUCTURE — direction, spread,
   concentration, cadence, outliers. Never state a total, average, percentage, or
   ranking figure. The app writes numbers; you write judgement.
