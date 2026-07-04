@@ -77,7 +77,7 @@ export function aggregateScalar(
   if (agg === "percent_of_total") {
     // Share of the (unfiltered) dataset covered by `filtered`, expressed
     // as a percent. Without a filter this trivially returns 100.
-    return rows.length === 0 ? 0 : (filtered.length / rows.length) * 100;
+    return rows.length === 0 ? 0 : filtered.length / rows.length;
   }
   const nums: number[] = [];
   for (const r of filtered) {
@@ -138,7 +138,7 @@ export function aggregateSeries(
       if (agg === "count") value = b.total;
       else if (agg === "null_count") value = b.nulls;
       else if (agg === "non_null_count") value = b.nonNull;
-      else value = totalRows === 0 ? 0 : (b.total / totalRows) * 100;
+      else value = totalRows === 0 ? 0 : b.total / totalRows;
       return { x: k, y: value };
     });
   }
@@ -207,7 +207,7 @@ export function aggregateStacked(
       else if (agg === "distinct_count") value = cell.distinct.size;
       else if (agg === "null_count") value = cell.nulls;
       else if (agg === "non_null_count") value = cell.nonNull;
-      else if (agg === "percent_of_total") value = xTotal === 0 ? 0 : (cell.total / xTotal) * 100;
+      else if (agg === "percent_of_total") value = xTotal === 0 ? 0 : cell.total / xTotal;
       else value = reduceAgg(cell.nums, agg);
       row[sk] = value;
     }
