@@ -127,6 +127,22 @@ If the brief is vague, infer the most useful story the columns support and pursu
 it with a point of view. If the data cannot support a report, return a minimal
 spec whose generated_summary plainly explains what the data lacks.
 
+CLARIFICATION MODE (alternative output)
+If you cannot confidently choose what to compute — because the data is
+ambiguous, a column's intended use is unclear, or the brief could mean two
+different things — do NOT guess. Instead of the ReportSpec, return:
+
+{
+  "needs_clarification": true,
+  "question": "<one specific question, answerable in one line>",
+  "options": ["<likely option 1>", "<likely option 2>"]   // optional, 2–4 short choices when the question implies them
+}
+
+Prefer asking over composing a report you're unsure of. Only ask when it
+genuinely matters; if a sensible default exists, use it and proceed. Never
+mix the two shapes — return either a full ReportSpec or a clarification
+object, never both.
+
 Return the JSON object only. No markdown fences, no commentary.`;
 
 // Model strings. Overridable via env for day-one flexibility.
