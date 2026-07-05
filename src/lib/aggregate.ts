@@ -13,6 +13,75 @@ export type Agg =
   | "max";
 export type Row = Record<string, unknown>;
 
+// ---------- time bucketing ----------
+
+export type TimeBucket = "day" | "week" | "month" | "quarter" | "year";
+
+const ISO_DAY = /^(\d{4})-(\d{2})-(\d{2})/;
+
+/** Collapse an ISO date string into a bucket key. Non-ISO input passes through. */
+export function bucketDate(v: string, bucket: TimeBucket): string {
+  const m = v.match(ISO_DAY);
+  if (!m) return v;
+  const [, y, mo, d] = m;
+  switch (bucket) {
+    case "day":
+      return `${y}-${mo}-${d}`;
+    case "week": {
+      // ISO week: key by the Monday of the week, kept as an ISO date.
+      const t = Date.UTC(Number(y), Number(mo) - 1, Number(d));
+      const date = new Date(t);
+      const dow = date.getUTCDay() || 7; // Mon=1..Sun=7
+      date.setUTCDate(date.getUTCDate() - (dow - 1));
+      return date.toISOString().slice(0, 10);
+    }
+    case "month":
+      return `${y}-${mo}-01`;
+    case "quarter":
+      return `${y}-Q${Math.floor((Number(mo) - 1) / 3) + 1}`;
+    case "year":
+      return y;
+  }
+}
+
+/** Numeric-aware key comparison: "2" < "10", dates and text sort lexically. */
+export function compareKeys(a: string, b: string): number {
+  const na = Number(a);
+  const nb = Number(b);
+  if (!Number.isNaN(na) && !Number.isNaN(nb) && a.trim() !== "" && b.trim() !== "") {
+    return na - nb;
+  }
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+// Aggs whose bucket values can be meaningfully added into an "Other" slice.
+const ADDITIVE = new Set<Agg>(["sum", "count", "null_count", "non_null_count", "percent_of_total"]);
+
+export function isAdditiveAgg(agg: Agg): boolean {
+  return ADDITIVE.has(agg);
+}
+
+/**
+ * Keep the top-n categories by value. Additive aggs roll the remainder into
+ * an "Other" slice; non-additive aggs (avg/min/max/distinct_count) truncate,
+ * and the caller footnotes the truncation. Input need not be sorted.
+ */
+export function topNWithOther(
+  data: Array<{ x: string; y: number }>,
+  n: number,
+  agg: Agg,
+): { data: Array<{ x: string; y: number }>; truncated: number; rolled: boolean } {
+  if (data.length <= n) return { data, truncated: 0, rolled: false };
+  const sorted = [...data].sort((a, b) => b.y - a.y);
+  const head = sorted.slice(0, n);
+  const tail = sorted.slice(n);
+  if (isAdditiveAgg(agg)) {
+    const other = tail.reduce((s, d) => s + d.y, 0);
+    return { data: [...head, { x: "Other", y: other }], truncated: tail.length, rolled: true };
+  }
+  return { data: head, truncated: tail.length, rolled: false };
+}
+
 export function isBlank(v: unknown): boolean {
   return (
     v === null ||
@@ -37,11 +106,16 @@ function toNum(v: unknown): number | null {
 export function reduceAgg(values: number[], agg: Agg): number {
   if (values.length === 0) return 0;
   switch (agg) {
-    case "sum": return values.reduce((s, v) => s + v, 0);
-    case "avg": return values.reduce((s, v) => s + v, 0) / values.length;
-    case "min": return Math.min(...values);
-    case "max": return Math.max(...values);
-    default: return 0;
+    case "sum":
+      return values.reduce((s, v) => s + v, 0);
+    case "avg":
+      return values.reduce((s, v) => s + v, 0) / values.length;
+    case "min":
+      return Math.min(...values);
+    case "max":
+      return Math.max(...values);
+    default:
+      return 0;
   }
 }
 
@@ -52,9 +126,7 @@ export function aggregateScalar(
   column: string,
   filter?: { column: string; equals: string },
 ): number {
-  const filtered = filter
-    ? rows.filter((r) => String(r[filter.column]) === filter.equals)
-    : rows;
+  const filtered = filter ? rows.filter((r) => String(r[filter.column]) === filter.equals) : rows;
   if (agg === "count") return filtered.length;
   if (agg === "distinct_count") {
     const seen = new Set<string>();
@@ -93,9 +165,7 @@ export function blankCount(
   column: string,
   filter?: { column: string; equals: string },
 ): number {
-  const filtered = filter
-    ? rows.filter((r) => String(r[filter.column]) === filter.equals)
-    : rows;
+  const filtered = filter ? rows.filter((r) => String(r[filter.column]) === filter.equals) : rows;
   let n = 0;
   for (const r of filtered) if (isBlank(r[column])) n++;
   return n;
@@ -107,30 +177,38 @@ export function aggregateSeries(
   x: string,
   y: string,
   agg: Agg,
+  xKey?: (v: unknown) => string,
 ): Array<{ x: string; y: number }> {
   const nonBlank = rows.filter((r) => !isBlank(r[x]));
+  const keyOf = xKey ?? ((v: unknown) => String(v));
 
   if (agg === "distinct_count") {
     const sets = new Map<string, Set<string>>();
     for (const r of nonBlank) {
-      const key = String(r[x]);
+      const key = keyOf(r[x]);
       if (!sets.has(key)) sets.set(key, new Set());
       const v = r[y];
       if (!isBlank(v)) sets.get(key)!.add(String(v));
     }
-    return [...sets.keys()].sort().map((k) => ({ x: k, y: sets.get(k)!.size }));
+    return [...sets.keys()].sort(compareKeys).map((k) => ({ x: k, y: sets.get(k)!.size }));
   }
 
-  if (agg === "count" || agg === "null_count" || agg === "non_null_count" || agg === "percent_of_total") {
+  if (
+    agg === "count" ||
+    agg === "null_count" ||
+    agg === "non_null_count" ||
+    agg === "percent_of_total"
+  ) {
     const buckets = new Map<string, { total: number; nulls: number; nonNull: number }>();
     for (const r of nonBlank) {
-      const key = String(r[x]);
+      const key = keyOf(r[x]);
       const b = buckets.get(key) ?? { total: 0, nulls: 0, nonNull: 0 };
       b.total += 1;
-      if (isBlank(r[y])) b.nulls += 1; else b.nonNull += 1;
+      if (isBlank(r[y])) b.nulls += 1;
+      else b.nonNull += 1;
       buckets.set(key, b);
     }
-    const keys = [...buckets.keys()].sort();
+    const keys = [...buckets.keys()].sort(compareKeys);
     const totalRows = nonBlank.length;
     return keys.map((k) => {
       const b = buckets.get(k)!;
@@ -145,7 +223,7 @@ export function aggregateSeries(
 
   const buckets = new Map<string, number[]>();
   for (const r of nonBlank) {
-    const key = String(r[x]);
+    const key = keyOf(r[x]);
     const n = toNum(r[y]);
     if (n !== null) {
       const arr = buckets.get(key) ?? [];
@@ -155,7 +233,7 @@ export function aggregateSeries(
       buckets.set(key, []);
     }
   }
-  const keys = [...buckets.keys()].sort();
+  const keys = [...buckets.keys()].sort(compareKeys);
   return keys.map((k) => ({ x: k, y: reduceAgg(buckets.get(k) ?? [], agg) }));
 }
 
@@ -166,8 +244,16 @@ export function aggregateStacked(
   y: string,
   series: string,
   agg: Agg,
+  xKey?: (v: unknown) => string,
 ): { data: Array<Record<string, string | number>>; seriesKeys: string[] } {
-  type Cell = { total: number; nulls: number; nonNull: number; distinct: Set<string>; nums: number[] };
+  const keyOf = xKey ?? ((v: unknown) => String(v));
+  type Cell = {
+    total: number;
+    nulls: number;
+    nonNull: number;
+    distinct: Set<string>;
+    nums: number[];
+  };
   const mkCell = (): Cell => ({ total: 0, nulls: 0, nonNull: 0, distinct: new Set(), nums: [] });
 
   const grid = new Map<string, Map<string, Cell>>();
@@ -177,9 +263,12 @@ export function aggregateStacked(
 
   for (const r of rows) {
     if (isBlank(r[x]) || isBlank(r[series])) continue;
-    const xk = String(r[x]);
+    const xk = keyOf(r[x]);
     const sk = String(r[series]);
-    if (!seen.has(sk)) { seen.add(sk); seriesOrder.push(sk); }
+    if (!seen.has(sk)) {
+      seen.add(sk);
+      seriesOrder.push(sk);
+    }
     if (!grid.has(xk)) grid.set(xk, new Map());
     const inner = grid.get(xk)!;
     const cell = inner.get(sk) ?? mkCell();
@@ -195,7 +284,7 @@ export function aggregateStacked(
     xTotals.set(xk, (xTotals.get(xk) ?? 0) + 1);
   }
 
-  const xKeys = [...grid.keys()].sort();
+  const xKeys = [...grid.keys()].sort(compareKeys);
   const data = xKeys.map((xk) => {
     const row: Record<string, string | number> = { x: xk };
     const inner = grid.get(xk)!;

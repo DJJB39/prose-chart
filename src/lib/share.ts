@@ -13,9 +13,14 @@ import {
   aggregateSeries,
   aggregateStacked,
   blankCount,
+  bucketDate,
+  isAdditiveAgg,
   isBlank,
+  topNWithOther,
   trendDirection,
+  type Agg,
   type Row,
+  type TimeBucket,
 } from "@/lib/aggregate";
 import type { FormatKind } from "@/lib/format";
 import { buildColorMap, uniqueOrdered, type ColorMap } from "@/lib/palette";
@@ -27,6 +32,7 @@ export type PreparedChart =
       data: Array<{ x: string; y: number }>;
       yFormat: FormatKind;
       xIsMonth: boolean;
+      xLabel?: "month" | "day" | "raw";
     }
   | {
       type: "donut";
@@ -39,6 +45,7 @@ export type PreparedChart =
       seriesKeys: string[];
       yFormat: FormatKind;
       xIsMonth: boolean;
+      xLabel?: "month" | "day" | "raw";
     }
   | {
       type: "single_stat";
@@ -52,12 +59,16 @@ export type PreparedKpi = {
   value: number;
   format: FormatKind;
   trend?: "up" | "down" | "flat";
+  /** Real period-over-period change, computed by the app. pct is a fraction. */
+  delta?: { pct: number; period: "month" };
 };
 
 export type PreparedSection = {
   heading: string;
   insight: string;
   chart: PreparedChart;
+  /** What was computed — kept for the numbers-aware narrative pass. */
+  meta?: { x: string; y: string; agg: string };
 };
 
 export type PreparedReport = {
@@ -71,9 +82,34 @@ export type PreparedReport = {
   kpis: PreparedKpi[];
   sections: PreparedSection[];
   colors: ColorMap;
+  /** True once the numbers-aware narrative pass has upgraded the prose. */
+  narrated?: boolean;
 };
 
 // ---------- format inference ----------
+
+/** Format is decided by the AGG first, the column name second. A count of
+ *  rows in a "Revenue" cut is a count, not a currency. */
+function formatFor(agg: Agg, yName: string): FormatKind {
+  if (agg === "percent_of_total") return "percent";
+  if (
+    agg === "count" ||
+    agg === "distinct_count" ||
+    agg === "null_count" ||
+    agg === "non_null_count"
+  ) {
+    return "compact";
+  }
+  return guessFormat(yName);
+}
+
+function coerceKpiFormat(agg: Agg, requested: FormatKind): FormatKind {
+  if (agg === "percent_of_total") return "percent";
+  const countLike =
+    agg === "count" || agg === "distinct_count" || agg === "null_count" || agg === "non_null_count";
+  if (countLike && requested === "currency") return "compact";
+  return requested;
+}
 
 function guessFormat(name: string): FormatKind {
   const n = name.toLowerCase();
@@ -83,10 +119,36 @@ function guessFormat(name: string): FormatKind {
   return "number";
 }
 
-function isMonthColumn(col: string, rows: Row[]): boolean {
+function isIsoDateColumn(col: string, rows: Row[]): boolean {
   const sample = rows.find((r) => r[col] !== null && r[col] !== undefined);
   if (!sample) return false;
   return typeof sample[col] === "string" && /^\d{4}-\d{2}-\d{2}/.test(String(sample[col]));
+}
+
+/** Distinct non-blank raw values in a column (cheap, capped scan). */
+function distinctCount(rows: Row[], col: string, cap = 200): number {
+  const seen = new Set<string>();
+  for (const r of rows) {
+    const v = r[col];
+    if (!isBlank(v)) {
+      seen.add(String(v));
+      if (seen.size >= cap) break;
+    }
+  }
+  return seen.size;
+}
+
+/** Pick the effective time bucket for a date-valued x axis. */
+function resolveBucket(
+  explicit: TimeBucket | undefined,
+  rows: Row[],
+  x: string,
+): TimeBucket | undefined {
+  if (explicit) return explicit;
+  // Auto-bucket: daily-grain data on a long axis is unreadable. If there are
+  // more than 45 distinct dates, roll up to months — same default judgement
+  // a good analyst (or Power BI's date hierarchy) would apply.
+  return distinctCount(rows, x, 60) > 45 ? "month" : undefined;
 }
 
 // ---------- prepare ----------
@@ -104,39 +166,106 @@ export function prepareReport(
       );
     }
     if (s.chart.type === "donut" || s.chart.type === "horizontal_bar" || s.chart.type === "bar") {
-      cats.push(
-        ...uniqueOrdered(rows.map((r) => String(r[s.chart.x])).filter((v) => !isBlank(v))),
-      );
+      cats.push(...uniqueOrdered(rows.map((r) => String(r[s.chart.x])).filter((v) => !isBlank(v))));
     }
   }
   const colors = buildColorMap(uniqueOrdered(cats));
+  // Top-N rollups introduce an "Other" slice that never appears in the raw
+  // categories — give it a deliberately muted, stable grey.
+  if (!("Other" in colors)) colors["Other"] = "#9aa0a8";
 
   const dateCol = Object.keys(rows[0] ?? {}).find(
     (c) => typeof rows[0]?.[c] === "string" && /^\d{4}-\d{2}-\d{2}/.test(String(rows[0][c])),
   );
 
+  const monthKey = (v: unknown) => bucketDate(String(v), "month");
+
   const kpis: PreparedKpi[] = spec.kpis.map((k) => {
     const value = aggregateScalar(rows, k.value_expr.agg, k.value_expr.column, k.value_expr.filter);
     let trend: "up" | "down" | "flat" | undefined;
-    if (k.trend && dateCol) {
-      const series = aggregateSeries(rows, dateCol, k.value_expr.column, k.value_expr.agg);
-      trend = trendDirection(series);
+    let delta: PreparedKpi["delta"];
+    if (dateCol) {
+      const scoped = k.value_expr.filter
+        ? rows.filter((r) => String(r[k.value_expr.filter!.column]) === k.value_expr.filter!.equals)
+        : rows;
+      const series = aggregateSeries(
+        scoped,
+        dateCol,
+        k.value_expr.column,
+        k.value_expr.agg,
+        monthKey,
+      );
+      if (series.length >= 2) {
+        trend = trendDirection(series);
+        const last = series[series.length - 1].y;
+        const prev = series[series.length - 2].y;
+        if (prev !== 0 && Number.isFinite(last) && Number.isFinite(prev)) {
+          delta = { pct: (last - prev) / Math.abs(prev), period: "month" };
+        }
+      } else if (k.trend) {
+        trend = trendDirection(series);
+      }
     }
-    return { label: k.label, value, format: k.format, trend };
+    return {
+      label: k.label,
+      value,
+      format: coerceKpiFormat(k.value_expr.agg, k.format),
+      trend,
+      delta,
+    };
   });
 
   const sections: PreparedSection[] = spec.sections.map((section) => {
     const chart = section.chart;
-    const yFormat = guessFormat(chart.y);
+    const yFormat = formatFor(chart.agg, chart.y);
     const scoped = chart.filter
       ? rows.filter((r) => String(r[chart.filter!.column]) === chart.filter!.equals)
       : rows;
-    const xIsMonth = isMonthColumn(chart.x, scoped);
+    const xIsDate = isIsoDateColumn(chart.x, scoped);
+    const bucket = xIsDate
+      ? resolveBucket(chart.x_bucket as TimeBucket | undefined, scoped, chart.x)
+      : undefined;
+    const xKey = bucket ? (v: unknown) => bucketDate(String(v), bucket) : undefined;
+    // Axis label style: months for month buckets and un-bucketed date axes
+    // (back-compat), day labels for day/week buckets, raw keys for Q/Y.
+    const xLabel: "month" | "day" | "raw" = !xIsDate
+      ? "raw"
+      : bucket === "day" || bucket === "week"
+        ? "day"
+        : bucket === "quarter" || bucket === "year"
+          ? "raw"
+          : "month";
+    const xIsMonth = xLabel === "month";
+    const categoricalX = !xIsDate;
+    let truncationNote: string | undefined;
+
+    /** Sort categorical distributions by value desc and cap at top-N. */
+    const shapeCategorical = (
+      data: Array<{ x: string; y: number }>,
+      defaultN: number,
+    ): Array<{ x: string; y: number }> => {
+      if (!categoricalX) return data;
+      const sorted = [...data].sort((a, b) => b.y - a.y);
+      const n = chart.top_n ?? defaultN;
+      if (sorted.length <= n) return sorted;
+      const { data: capped, truncated, rolled } = topNWithOther(sorted, n, chart.agg);
+      truncationNote = rolled
+        ? `The smallest ${truncated.toLocaleString("en-GB")} ${chart.x} values are grouped as “Other”.`
+        : `Showing the top ${n} of ${sorted.length.toLocaleString("en-GB")} ${chart.x} values by ${chart.agg}; ${chart.agg} does not aggregate into an “Other” group.`;
+      return capped;
+    };
 
     let prepared: PreparedChart;
     if (chart.type === "stacked_bar" && chart.series) {
-      const { data, seriesKeys } = aggregateStacked(scoped, chart.x, chart.y, chart.series, chart.agg);
-      prepared = { type: "stacked_bar", data, seriesKeys, yFormat, xIsMonth };
+      const { data, seriesKeys } = aggregateStacked(
+        scoped,
+        chart.x,
+        chart.y,
+        chart.series,
+        chart.agg,
+        xKey,
+      );
+      prepared = { type: "stacked_bar", data, seriesKeys, yFormat, xIsMonth, xLabel };
     } else if (chart.type === "single_stat") {
       const value = aggregateScalar(scoped, chart.agg, chart.y);
       const footnote = chart.filter
@@ -144,15 +273,18 @@ export function prepareReport(
         : undefined;
       prepared = { type: "single_stat", value, format: yFormat, footnote };
     } else if (chart.type === "donut") {
-      const data = aggregateSeries(scoped, chart.x, chart.y, chart.agg);
+      const data = shapeCategorical(aggregateSeries(scoped, chart.x, chart.y, chart.agg, xKey), 6);
       prepared = { type: "donut", data, yFormat };
     } else {
       // Validator guarantees stacked_bar has a series here; any other
       // shape renders through the flat series path. No silent metric
       // substitution — the agg the spec asked for is what we compute.
       const flatType = chart.type as "line" | "area" | "bar" | "horizontal_bar";
-      const data = aggregateSeries(scoped, chart.x, chart.y, chart.agg);
-      prepared = { type: flatType, data, yFormat, xIsMonth };
+      let data = aggregateSeries(scoped, chart.x, chart.y, chart.agg, xKey);
+      if (flatType === "bar" || flatType === "horizontal_bar") {
+        data = shapeCategorical(data, 12);
+      }
+      prepared = { type: flatType, data, yFormat, xIsMonth, xLabel };
     }
 
     // Data-quality note: if the chart groups by a categorical column and
@@ -174,7 +306,14 @@ export function prepareReport(
       }
     }
 
-    return { heading: section.heading, insight, chart: prepared };
+    if (truncationNote) insight += ` ${truncationNote}`;
+
+    return {
+      heading: section.heading,
+      insight,
+      chart: prepared,
+      meta: { x: chart.x, y: chart.y, agg: chart.agg },
+    };
   });
 
   return {

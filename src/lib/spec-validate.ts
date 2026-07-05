@@ -10,8 +10,7 @@ import type { Agg } from "./aggregate";
 import type { ReportSpec } from "./spec";
 
 export type ValidationResult =
-  | { ok: true; spec: ReportSpec; warnings: string[] }
-  | { ok: false; errors: string[] };
+  { ok: true; spec: ReportSpec; warnings: string[] } | { ok: false; errors: string[] };
 
 // Role/agg compatibility matrix. Anything not listed is rejected.
 const COMPAT: Record<Agg, ColumnRole[]> = {
@@ -77,6 +76,18 @@ export function validateSpec(spec: ReportSpec, profile: DatasetProfile): Validat
 
     let series = c.series;
     let type = c.type;
+    let x_bucket = c.x_bucket;
+    if (x_bucket) {
+      const xc = byName.get(c.x);
+      if (xc && xc.role !== "temporal") {
+        // Bucketing a non-date axis is meaningless — rendering constraint,
+        // not a metric substitution, so drop with a warning.
+        warnings.push(
+          `section "${s.heading}": x_bucket "${x_bucket}" dropped — "${c.x}" is not temporal`,
+        );
+        x_bucket = undefined;
+      }
+    }
     if (series) {
       const sc = byName.get(series);
       if (!sc) {
@@ -84,7 +95,9 @@ export function validateSpec(spec: ReportSpec, profile: DatasetProfile): Validat
       } else if (sc.cardinality > 8) {
         // Rendering constraint (legend blows up), NOT a metric substitution.
         // The metric requested by the model is preserved on the x axis.
-        warnings.push(`section "${s.heading}": dropped series "${series}" (cardinality ${sc.cardinality} > 8)`);
+        warnings.push(
+          `section "${s.heading}": dropped series "${series}" (cardinality ${sc.cardinality} > 8)`,
+        );
         series = undefined;
       }
     }
@@ -92,7 +105,7 @@ export function validateSpec(spec: ReportSpec, profile: DatasetProfile): Validat
       warnings.push(`section "${s.heading}": stacked_bar with no series → downgraded to bar`);
       type = "bar";
     }
-    return { ...s, chart: { ...c, type, series } };
+    return { ...s, chart: { ...c, type, series, x_bucket } };
   });
 
   if (errors.length > 0) return { ok: false, errors };

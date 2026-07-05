@@ -9,6 +9,7 @@ import { sampleMeta, sampleRows } from "@/lib/sample-data";
 import { parseFile } from "@/lib/parse";
 import { profileDataset } from "@/lib/profile";
 import { ReportSpecSchema } from "@/lib/spec";
+import { upgradeNarrative } from "@/lib/narrate";
 import { prepareReport, type PreparedReport } from "@/lib/share";
 import type { Row } from "@/lib/aggregate";
 
@@ -41,8 +42,25 @@ function VeritasApp() {
   const [clarification, setClarification] = useState<Clarification | null>(null);
   const pendingRef = useRef<{ brief: string; rows: Row[]; filename: string } | null>(null);
   const reportRef = useRef<HTMLElement>(null);
+  const generationRef = useRef(0);
 
-  async function composeVia(brief: string, rows: Row[], filename: string): Promise<PreparedReport | "clarification"> {
+  /** Show the structural report immediately, then upgrade the prose in
+   *  place once the numbers-aware narrative pass verifies. */
+  function present(result: PreparedReport) {
+    const generation = ++generationRef.current;
+    setPrepared(result);
+    void upgradeNarrative(result).then((upgraded) => {
+      if (upgraded && generationRef.current === generation) {
+        setPrepared((prev) => (prev && !prev.narrated ? upgraded : prev));
+      }
+    });
+  }
+
+  async function composeVia(
+    brief: string,
+    rows: Row[],
+    filename: string,
+  ): Promise<PreparedReport | "clarification"> {
     const profile = profileDataset(rows);
     const res = await fetch("/api/compose", {
       method: "POST",
@@ -83,7 +101,7 @@ function VeritasApp() {
         return;
       }
       const result = await composeVia(brief, parsed.rows as Row[], parsed.filename);
-      if (result !== "clarification") setPrepared(result);
+      if (result !== "clarification") present(result);
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : "Veritas could not compose this report.");
@@ -97,8 +115,12 @@ function VeritasApp() {
     setClarification(null);
     setLoading(true);
     try {
-      const result = await composeVia(sampleMeta.brief, sampleRows as unknown as Row[], sampleMeta.source_filename);
-      if (result !== "clarification") setPrepared(result);
+      const result = await composeVia(
+        sampleMeta.brief,
+        sampleRows as unknown as Row[],
+        sampleMeta.source_filename,
+      );
+      if (result !== "clarification") present(result);
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : "Veritas could not compose the sample report.");
@@ -119,7 +141,7 @@ function VeritasApp() {
       const result = await composeVia(appendedBrief, pending.rows, pending.filename);
       if (result !== "clarification") {
         pendingRef.current = null;
-        setPrepared(result);
+        present(result);
       }
     } catch (err) {
       console.error(err);
@@ -152,7 +174,10 @@ function VeritasApp() {
       <ExportBar
         targetRef={reportRef}
         filename={`veritas-${prepared.sourceFilename.replace(/\.[^.]+$/, "")}.pdf`}
-        onReset={() => setPrepared(null)}
+        onReset={() => {
+          generationRef.current++;
+          setPrepared(null);
+        }}
         prepared={prepared}
       />
       <main className="mx-auto max-w-[900px] px-8 py-10">

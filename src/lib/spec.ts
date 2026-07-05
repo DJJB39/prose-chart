@@ -17,7 +17,13 @@ export const AggSchema = z.enum([
 ]);
 export const FormatSchema = z.enum(["currency", "number", "percent", "compact"]);
 export const ChartTypeSchema = z.enum([
-  "line", "bar", "stacked_bar", "area", "donut", "horizontal_bar", "single_stat",
+  "line",
+  "bar",
+  "stacked_bar",
+  "area",
+  "donut",
+  "horizontal_bar",
+  "single_stat",
 ]);
 
 export const FilterSchema = z.object({
@@ -51,6 +57,8 @@ export const SectionSchema = z.object({
     series: z.string().min(1).optional(),
     agg: AggSchema,
     filter: FilterSchema.optional(),
+    x_bucket: z.enum(["day", "week", "month", "quarter", "year"]).optional(),
+    top_n: z.number().int().min(3).max(20).optional(),
   }),
 });
 
