@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SharePayloadRouteImport } from './routes/share.$payload'
+import { Route as ApiNarrateRouteImport } from './routes/api/narrate'
 import { Route as ApiComposeRouteImport } from './routes/api/compose'
 
 const IndexRoute = IndexRouteImport.update({
@@ -23,6 +24,11 @@ const SharePayloadRoute = SharePayloadRouteImport.update({
   path: '/share/$payload',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiNarrateRoute = ApiNarrateRouteImport.update({
+  id: '/api/narrate',
+  path: '/api/narrate',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiComposeRoute = ApiComposeRouteImport.update({
   id: '/api/compose',
   path: '/api/compose',
@@ -32,30 +38,34 @@ const ApiComposeRoute = ApiComposeRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/compose': typeof ApiComposeRoute
+  '/api/narrate': typeof ApiNarrateRoute
   '/share/$payload': typeof SharePayloadRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/compose': typeof ApiComposeRoute
+  '/api/narrate': typeof ApiNarrateRoute
   '/share/$payload': typeof SharePayloadRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/api/compose': typeof ApiComposeRoute
+  '/api/narrate': typeof ApiNarrateRoute
   '/share/$payload': typeof SharePayloadRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/compose' | '/share/$payload'
+  fullPaths: '/' | '/api/compose' | '/api/narrate' | '/share/$payload'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/compose' | '/share/$payload'
-  id: '__root__' | '/' | '/api/compose' | '/share/$payload'
+  to: '/' | '/api/compose' | '/api/narrate' | '/share/$payload'
+  id: '__root__' | '/' | '/api/compose' | '/api/narrate' | '/share/$payload'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiComposeRoute: typeof ApiComposeRoute
+  ApiNarrateRoute: typeof ApiNarrateRoute
   SharePayloadRoute: typeof SharePayloadRoute
 }
 
@@ -75,6 +85,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SharePayloadRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/narrate': {
+      id: '/api/narrate'
+      path: '/api/narrate'
+      fullPath: '/api/narrate'
+      preLoaderRoute: typeof ApiNarrateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/compose': {
       id: '/api/compose'
       path: '/api/compose'
@@ -88,8 +105,19 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiComposeRoute: ApiComposeRoute,
+  ApiNarrateRoute: ApiNarrateRoute,
   SharePayloadRoute: SharePayloadRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

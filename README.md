@@ -68,7 +68,9 @@ Validated with Zod in `src/lib/spec.ts`. Shape:
         "y": "column name",
         "series": "categorical column, cardinality ≤ 8",   // optional
         "agg": "sum | avg | count | min | max",
-        "filter": { "column": "...", "equals": "..." }     // optional
+        "filter": { "column": "...", "equals": "..." },    // optional
+        "x_bucket": "day | week | month | quarter | year", // optional, temporal x only
+        "top_n": 3-20                                      // optional, categorical bars/donuts
       }
     }
   ],
@@ -83,6 +85,31 @@ columns, and any `series` binding with cardinality > 8 is dropped
 error, the compose route retries the model **once** with the specific
 Zod/profile error restated. If the retry also fails, the request is
 refused with editorial copy — the renderer never sees a malformed spec.
+
+## The analyst pass (numbers-aware narrative)
+
+Compose keeps the model blind to every value. Once the app has computed the
+report, a second pass — `POST /api/narrate` — hands the model the finished
+figures: every KPI value, every month-on-month delta, and each chart's
+aggregated points (`src/lib/narrate.ts` builds this digest). The model
+rewrites the summary, insights and conclusion with real figures.
+
+The discipline survives mechanically: `verifyNarrative` extracts every
+numeric token from the returned prose and rejects any figure that does not
+appear verbatim in the digest. One retry with the offenders restated; if
+that also fails, the structural (phase-1) prose stands. The client renders
+the structural report immediately and upgrades the text in place when the
+narrated version verifies — the report is never blocked on the second call.
+
+## Chart shaping the app applies
+
+- **Time bucketing** — a temporal x axis honours `x_bucket`; without one,
+  more than 45 distinct dates auto-buckets to months.
+- **Top-N** — categorical bars/donuts sort by value descending and cap at
+  `top_n` (default 12 bars / 6 donut segments). Additive aggregations roll
+  the remainder into "Other"; non-additive ones truncate with a footnote.
+- **KPI deltas** — when a date column exists, every KPI shows its real
+  month-on-month change, computed from the data, not asserted by the model.
 
 ## The verbatim system prompt
 

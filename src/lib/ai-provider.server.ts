@@ -71,7 +71,9 @@ OUTPUT: a single JSON object, no prose around it, matching this schema:
         "y": string,
         "series": string,                            // optional, cardinality ≤ 8
         "agg": "sum" | "avg" | "count" | "distinct_count" | "null_count" | "non_null_count" | "percent_of_total" | "min" | "max",
-        "filter": { "column": string, "equals": string }   // optional
+        "filter": { "column": string, "equals": string },  // optional
+        "x_bucket": "day" | "week" | "month" | "quarter" | "year",  // optional, ONLY when x is temporal
+        "top_n": number                              // optional 3–20, for bar/horizontal_bar/donut on dimensions
       }
     }
   ],
@@ -100,6 +102,14 @@ CONSTRAINTS
   the right agg the first time.
 - series must have cardinality ≤ 8.
 - Prefer a temporal column for x on time-based charts.
+- x_bucket: when x is temporal, choose the reading grain. Daily data spanning
+  more than ~10 weeks should be bucketed to "month"; multi-year data to
+  "quarter" or "year". Omit it for data already at the right grain. Never
+  set x_bucket on a non-temporal column.
+- top_n: when a bar, horizontal_bar or donut cuts a dimension with high
+  cardinality (see the profile), set top_n (typically 8–12 for bars, 5–6
+  for donuts). The app sorts by value and rolls the remainder into "Other"
+  for additive aggregations.
 - Distinct cuts per section: do not repeat the same x/y/series combination.
 - If profile.columns contains NO column with role "measure", you MUST use
   count, distinct_count, null_count, non_null_count, or percent_of_total
@@ -145,6 +155,48 @@ object, never both.
 
 Return the JSON object only. No markdown fences, no commentary.`;
 
+export const NARRATE_SYSTEM_PROMPT = `You are the analyst voice of Veritas. A first pass chose the report's metrics
+and charts while blind to every value. You now receive the COMPUTED report —
+every KPI value, every period-over-period change, and every chart's aggregated
+data points, all calculated by the application from the full dataset. Your job
+is to rewrite the prose so it states the specific findings the structural
+draft could only gesture at.
+
+INPUT (user message, JSON): the digest —
+{ brief, title, row_count,
+  kpis: [{ label, value, change_vs_prior_month? }],
+  sections: [{ heading, chart, x, y, agg, point_count, points: [{x, y}], structural_insight }],
+  structural_summary, structural_conclusion? }
+
+Point values are pre-formatted strings. Points may be a subset of a longer
+series; entries tagged (peak) and (trough) are the true extremes of the full
+series. point_count is the full number of buckets.
+
+HARD RULES — the app verifies these mechanically and rejects violations:
+- Quote figures EXACTLY as they appear in the digest: same rounding, same
+  symbols (£, %, k, m), same digits. Never recompute, re-round, convert
+  units, or derive new numbers (no sums, differences, or ratios of your own).
+- If the number you want is not in the digest, make the point without a
+  number. Counting listed items in words ("three of the five regions") is
+  fine; digits must come from the digest.
+- Preserve the substance of any data-quality sentence in a structural_insight
+  (records excluded for missing values) — keep its exact figures.
+
+WRITE:
+- summary: 2–4 sentences. Lead with the single most consequential finding,
+  with its figure. Name real categories and periods.
+- insights: one entry per section, same order, 1–3 sentences each. Say what
+  the chart actually shows: the largest, the outlier, the turning point, the
+  gap — with figures from that section's points. Never restate the heading.
+- conclusion: 1–2 sentences on the through-line, only if one genuinely exists.
+
+VOICE: editorial, restrained, specific. British English. No hedging clichés,
+no emoji, no exclamation marks. Numbers carry the argument; adjectives do not.
+
+OUTPUT: JSON only, no fences, no commentary:
+{ "summary": string, "insights": [string, ...], "conclusion": string }
+(conclusion optional)`;
+
 // Model strings. Overridable via env for day-one flexibility.
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5";
 const GATEWAY_MODEL = process.env.GATEWAY_MODEL || "openai/gpt-5";
@@ -172,7 +224,10 @@ function buildUserMessage(input: ComposeInput): string {
 function stripFences(text: string): string {
   const t = text.trim();
   if (t.startsWith("```")) {
-    return t.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+    return t
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/```\s*$/, "")
+      .trim();
   }
   return t;
 }
@@ -180,7 +235,11 @@ function stripFences(text: string): string {
 /** Extract the first {...} JSON object from a possibly noisy string. */
 export function extractJson(text: string): unknown {
   const t = stripFences(text);
-  try { return JSON.parse(t); } catch { /* fall through */ }
+  try {
+    return JSON.parse(t);
+  } catch {
+    /* fall through */
+  }
   const start = t.indexOf("{");
   const end = t.lastIndexOf("}");
   if (start >= 0 && end > start) {
@@ -189,7 +248,7 @@ export function extractJson(text: string): unknown {
   throw new Error("Provider returned no parseable JSON");
 }
 
-async function callAnthropic(input: ComposeInput): Promise<unknown> {
+async function callAnthropic(system: string, user: string): Promise<unknown> {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) throw new Error("Missing ANTHROPIC_API_KEY");
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -202,8 +261,8 @@ async function callAnthropic(input: ComposeInput): Promise<unknown> {
     body: JSON.stringify({
       model: ANTHROPIC_MODEL,
       max_tokens: 4096,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: buildUserMessage(input) }],
+      system,
+      messages: [{ role: "user", content: user }],
     }),
   });
   if (!res.ok) {
@@ -211,12 +270,15 @@ async function callAnthropic(input: ComposeInput): Promise<unknown> {
     throw new Error(`Anthropic ${res.status}: ${body.slice(0, 500)}`);
   }
   const data = (await res.json()) as { content?: Array<{ type: string; text?: string }> };
-  const text = (data.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
+  const text = (data.content ?? [])
+    .filter((b) => b.type === "text")
+    .map((b) => b.text ?? "")
+    .join("");
   if (!text) throw new Error("Anthropic returned empty content");
   return extractJson(text);
 }
 
-async function callGateway(input: ComposeInput): Promise<unknown> {
+async function callGateway(system: string, user: string): Promise<unknown> {
   const key = process.env.LOVABLE_API_KEY;
   if (!key) throw new Error("Missing LOVABLE_API_KEY");
   const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -228,8 +290,8 @@ async function callGateway(input: ComposeInput): Promise<unknown> {
     body: JSON.stringify({
       model: GATEWAY_MODEL,
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: buildUserMessage(input) },
+        { role: "system", content: system },
+        { role: "user", content: user },
       ],
       response_format: { type: "json_object" },
     }),
@@ -249,8 +311,30 @@ export function getProviderName(): ProviderName {
   return v === "gateway" ? "gateway" : "anthropic";
 }
 
-export async function callProvider(input: ComposeInput): Promise<{ raw: unknown; provider: ProviderName; model: string }> {
+async function callRaw(
+  system: string,
+  user: string,
+): Promise<{ raw: unknown; provider: ProviderName; model: string }> {
   const provider = getProviderName();
-  const raw = provider === "anthropic" ? await callAnthropic(input) : await callGateway(input);
+  const raw =
+    provider === "anthropic" ? await callAnthropic(system, user) : await callGateway(system, user);
   return { raw, provider, model: provider === "anthropic" ? ANTHROPIC_MODEL : GATEWAY_MODEL };
+}
+
+export async function callProvider(
+  input: ComposeInput,
+): Promise<{ raw: unknown; provider: ProviderName; model: string }> {
+  return callRaw(SYSTEM_PROMPT, buildUserMessage(input));
+}
+
+/** Second pass: rewrite the prose with real, verified figures. */
+export async function callNarrator(
+  digest: unknown,
+  retry_reason?: string,
+): Promise<{ raw: unknown; provider: ProviderName; model: string }> {
+  const body = JSON.stringify(digest);
+  const user = retry_reason
+    ? `The previous response failed verification: ${retry_reason}\n\nRewrite the narrative again. Every figure must appear verbatim in this digest:\n\n${body}`
+    : body;
+  return callRaw(NARRATE_SYSTEM_PROMPT, user);
 }
